@@ -1,10 +1,22 @@
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local lp = Players.LocalPlayer
 
-local HIDE_RADIUS = 40
+-- ===== CẤU HÌNH =====
+local FPS_CAP = 20          -- 10-15: treo thuần | 30: vừa treo vừa xem
+local HIDE_RADIUS = 10      -- vật thể xa hơn số này sẽ bị ẩn
 local HIDE_KEYWORDS = {"house", "home", "building", "nha", "shop", "tower"}
+local NOCLIP = true
+local ANTI_FALL = true
+local DISABLE_3D = false    -- true = màn hình đen, gần như không tốn GPU
+
+-- ===== KHÓA FPS =====
+pcall(function() setfpscap(FPS_CAP) end)
+if DISABLE_3D then
+    pcall(function() RunService:Set3dRenderingEnabled(false) end)
+end
 
 -- ===== ANTI KICK AFK =====
 lp.Idled:Connect(function()
@@ -32,48 +44,102 @@ local function killEffect(v)
     end
 end
 
+pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
 Lighting.GlobalShadows = false
 Lighting.FogEnd = 9e9
 for _, v in ipairs(Lighting:GetDescendants()) do pcall(killEffect, v) end
 for _, v in ipairs(workspace:GetDescendants()) do pcall(killEffect, v) end
 workspace.DescendantAdded:Connect(function(v) pcall(killEffect, v) end)
 
--- ===== ẨN NHÀ / VẬT THỂ XUNG QUANH =====
-local function isCharacter(part)
-    local m = part:FindFirstAncestorOfClass("Model")
+-- ===== ẨN NHÀ / VẬT THỂ XUNG QUANH (bản nhẹ) =====
+local parts = {}
+local nameHide = {}
+
+local function addPart(p)
+    if p:IsA("BasePart") and not p:IsA("Terrain") then
+        parts[#parts + 1] = p
+        local m = p:FindFirstAncestorOfClass("Model")
+        if m then
+            local n = m.Name:lower()
+            for _, k in ipairs(HIDE_KEYWORDS) do
+                if n:find(k) then nameHide[p] = true break end
+            end
+        end
+    end
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do addPart(v) end
+workspace.DescendantAdded:Connect(addPart)
+
+local function isCharacter(p)
+    local m = p:FindFirstAncestorOfClass("Model")
     return m and m:FindFirstChildOfClass("Humanoid") ~= nil
 end
 
-local function nameMatch(part)
-    local m = part:FindFirstAncestorOfClass("Model")
-    if not m then return false end
-    local n = m.Name:lower()
-    for _, k in ipairs(HIDE_KEYWORDS) do
-        if n:find(k) then return true end
-    end
-    return false
-end
-
 task.spawn(function()
-    while task.wait(1.5) do
+    while task.wait(3) do
         local char = lp.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
-            local n = 0
-            for _, p in ipairs(workspace:GetDescendants()) do
-                if p:IsA("BasePart") and not p:IsA("Terrain") and not isCharacter(p) then
-                    local far = (p.Position - root.Position).Magnitude > HIDE_RADIUS
-                    local hide = far or nameMatch(p)
-                    pcall(function()
-                        p.LocalTransparencyModifier = hide and 1 or 0
-                        p.CastShadow = false
-                    end)
+            local pos = root.Position
+            for i = #parts, 1, -1 do
+                local p = parts[i]
+                if not p.Parent then
+                    table.remove(parts, i)
+                elseif not p:IsDescendantOf(char) then
+                    local hide = nameHide[p] or (p.Position - pos).Magnitude > HIDE_RADIUS
+                    if hide and isCharacter(p) then hide = false end
+                    p.LocalTransparencyModifier = hide and 1 or 0
                 end
-                n += 1
-                if n % 300 == 0 then task.wait() end
+                if i % 400 == 0 then task.wait() end
             end
         end
     end
 end)
 
-print("Đã bật: xóa hiệu ứng + ẩn nhà + anti AFK")
+-- ===== ẨN CÁC CON / NHÂN VẬT KHÁC =====
+local function hideModel(m)
+    if m == lp.Character then return end
+    for _, d in ipairs(m:GetDescendants()) do
+        if d:IsA("BasePart") then
+            d.LocalTransparencyModifier = 1
+        elseif d:IsA("BillboardGui") then
+            d.Enabled = false
+        elseif d:IsA("Decal") then
+            d.Transparency = 1
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(2) do
+        for _, h in ipairs(workspace:GetDescendants()) do
+            if h:IsA("Humanoid") and h.Parent and h.Parent ~= lp.Character then
+                pcall(hideModel, h.Parent)
+            elseif h:IsA("BillboardGui") and not h:IsDescendantOf(lp.Character or workspace) then
+                pcall(function() h.Enabled = false end)
+            end
+        end
+    end
+end)
+
+-- ===== NOCLIP =====
+RunService.Stepped:Connect(function()
+    if not NOCLIP then return end
+    local char = lp.Character
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = false end
+    end
+    if ANTI_FALL then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local v = root.AssemblyLinearVelocity
+            if v.Y < 0 then
+                root.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z)
+            end
+        end
+    end
+end)
+
+print("Đã bật: khóa FPS " .. FPS_CAP .. " + xóa hiệu ứng + ẩn nhà/con + noclip + anti AFK")
