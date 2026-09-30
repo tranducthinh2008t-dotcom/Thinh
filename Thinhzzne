@@ -1,0 +1,79 @@
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local VirtualUser = game:GetService("VirtualUser")
+local lp = Players.LocalPlayer
+
+local HIDE_RADIUS = 40
+local HIDE_KEYWORDS = {"house", "home", "building", "nha", "shop", "tower"}
+
+-- ===== ANTI KICK AFK =====
+lp.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+task.spawn(function()
+    while task.wait(300) do
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+end)
+
+-- ===== XÓA HIỆU ỨNG =====
+local function killEffect(v)
+    if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam")
+        or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles")
+        or v:IsA("PointLight") or v:IsA("SpotLight") or v:IsA("SurfaceLight")
+        or v:IsA("PostEffect") or v:IsA("Atmosphere")
+        or v:IsA("Highlight") or v:IsA("Explosion") then
+        v:Destroy()
+    end
+end
+
+Lighting.GlobalShadows = false
+Lighting.FogEnd = 9e9
+for _, v in ipairs(Lighting:GetDescendants()) do pcall(killEffect, v) end
+for _, v in ipairs(workspace:GetDescendants()) do pcall(killEffect, v) end
+workspace.DescendantAdded:Connect(function(v) pcall(killEffect, v) end)
+
+-- ===== ẨN NHÀ / VẬT THỂ XUNG QUANH =====
+local function isCharacter(part)
+    local m = part:FindFirstAncestorOfClass("Model")
+    return m and m:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
+local function nameMatch(part)
+    local m = part:FindFirstAncestorOfClass("Model")
+    if not m then return false end
+    local n = m.Name:lower()
+    for _, k in ipairs(HIDE_KEYWORDS) do
+        if n:find(k) then return true end
+    end
+    return false
+end
+
+task.spawn(function()
+    while task.wait(1.5) do
+        local char = lp.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local n = 0
+            for _, p in ipairs(workspace:GetDescendants()) do
+                if p:IsA("BasePart") and not p:IsA("Terrain") and not isCharacter(p) then
+                    local far = (p.Position - root.Position).Magnitude > HIDE_RADIUS
+                    local hide = far or nameMatch(p)
+                    pcall(function()
+                        p.LocalTransparencyModifier = hide and 1 or 0
+                        p.CastShadow = false
+                    end)
+                end
+                n += 1
+                if n % 300 == 0 then task.wait() end
+            end
+        end
+    end
+end)
+
+print("Đã bật: xóa hiệu ứng + ẩn nhà + anti AFK")
