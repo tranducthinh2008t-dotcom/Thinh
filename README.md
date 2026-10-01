@@ -7,26 +7,43 @@ local TeleportService = game:GetService("TeleportService")
 local lp = Players.LocalPlayer
 
 -- ===== CẤU HÌNH =====
-local FPS_CAP = 15
-local DISABLE_3D = true      -- false = giữ 3D để cap FPS ăn chắc hơn
-local SHOW_FPS = true
-local SHOW_FLOOR_HUD = true
-local HIDE_STUFF = true
-local HIDE_KEYWORDS = {"house", "home", "building", "nha", "shop", "tower"}
+local FPS_CAP = 12
+local DISABLE_3D = true        -- tự bật lại 3D nếu cap không ăn
+local SHOW_FPS = true          -- test xong đổi thành false
+local MUTE_SOUND = true
+local LIGHTEN_MAP = true
 local AUTO_REJOIN = true
-local LISTEN_SECONDS = 30
+local LISTEN_SECONDS = 60
+
+task.wait(math.random() * 8)   -- lệch giờ giữa các acc
 
 -- ===== KHÓA FPS =====
-local function applyCap()
-    pcall(function() setfpscap(FPS_CAP) end)
-end
+local function applyCap() pcall(function() setfpscap(FPS_CAP) end) end
 applyCap()
 task.delay(15, applyCap)
 task.spawn(function()
-    while task.wait(10) do applyCap() end
+    while task.wait(30) do applyCap() end
 end)
+
 pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-pcall(function() RunService:Set3dRenderingEnabled(not DISABLE_3D) end)
+Lighting.GlobalShadows = false
+Lighting.FogEnd = 9e9
+
+-- ===== TẮT 3D (tự kiểm tra) =====
+if DISABLE_3D then
+    pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    task.delay(20, function()
+        local n, t0 = 0, os.clock()
+        local c = RunService.Heartbeat:Connect(function() n += 1 end)
+        task.wait(3)
+        c:Disconnect()
+        local fps = n / (os.clock() - t0)
+        if fps > FPS_CAP + 10 then
+            pcall(function() RunService:Set3dRenderingEnabled(true) end)
+            warn("Cap không ăn khi tắt 3D (" .. math.floor(fps) .. " FPS), đã bật lại 3D")
+        end
+    end)
+end
 
 -- ===== ANTI AFK =====
 lp.Idled:Connect(function()
@@ -42,128 +59,82 @@ task.spawn(function()
     end
 end)
 
--- ===== AUTO REJOIN =====
+-- ===== AUTO REJOIN (chống lặp) =====
 if AUTO_REJOIN then
+    local rejoining = false
     GuiService.ErrorMessageChanged:Connect(function()
-        task.wait(3)
+        if rejoining then return end
+        rejoining = true
+        task.wait(5)
         pcall(function() TeleportService:Teleport(game.PlaceId, lp) end)
+        task.wait(30)
+        rejoining = false
     end)
 end
 
--- ===== XÓA HIỆU ỨNG + ẨN NHÀ/CON =====
-Lighting.GlobalShadows = false
-Lighting.FogEnd = 9e9
+-- ===== MUTE =====
+if MUTE_SOUND then
+    pcall(function() UserSettings():GetService("UserGameSettings").MasterVolume = 0 end)
+end
 
+-- ===== DỌN MAP (quét 1 lần) =====
 local EFFECTS = {"ParticleEmitter","Trail","Beam","Smoke","Fire","Sparkles",
     "PointLight","SpotLight","SurfaceLight","PostEffect","Atmosphere","Highlight","Explosion"}
 
-local function isEffect(v)
-    for _, c in ipairs(EFFECTS) do
-        if v:IsA(c) then return true end
-    end
-    return false
-end
-
-local function shouldHideModel(m)
-    if m:FindFirstChildOfClass("Humanoid") and m ~= lp.Character then return true end
-    local n = m.Name:lower()
-    for _, k in ipairs(HIDE_KEYWORDS) do
-        if n:find(k, 1, true) then return true end
-    end
-    return false
-end
-
 local function handle(v)
-    local char = lp.Character
-    if isEffect(v) then
-        v:Destroy()
-    elseif HIDE_STUFF and not DISABLE_3D then
-        if v:IsA("BillboardGui") then
-            if not (char and v:IsDescendantOf(char)) then v.Enabled = false end
+    for _, c in ipairs(EFFECTS) do
+        if v:IsA(c) then v:Destroy() return end
+    end
+    if MUTE_SOUND and v:IsA("Sound") then
+        v.Volume = 0
+    elseif LIGHTEN_MAP then
+        if v:IsA("Decal") or v:IsA("Texture") then
+            if not (lp.Character and v:IsDescendantOf(lp.Character)) then v:Destroy() end
         elseif v:IsA("BasePart") and not v:IsA("Terrain") then
-            if char and v:IsDescendantOf(char) then return end
-            local m = v:FindFirstAncestorOfClass("Model")
-            while m do
-                if shouldHideModel(m) then
-                    v.LocalTransparencyModifier = 1
-                    return
-                end
-                m = m:FindFirstAncestorOfClass("Model")
-            end
+            v.Material = Enum.Material.SmoothPlastic
+            v.Reflectance = 0
+            v.CastShadow = false
         end
     end
 end
 
 for _, v in ipairs(Lighting:GetDescendants()) do pcall(handle, v) end
-for _, v in ipairs(workspace:GetDescendants()) do pcall(handle, v) end
-if LISTEN_SECONDS > 0 then
-    local conn = workspace.DescendantAdded:Connect(function(v)
-        task.defer(pcall, handle, v)
-    end)
-    task.delay(LISTEN_SECONDS, function() conn:Disconnect() end)
+local n = 0
+for _, v in ipairs(workspace:GetDescendants()) do
+    pcall(handle, v)
+    n += 1
+    if n % 300 == 0 then task.wait() end
 end
-
--- ===== GUI CHUNG =====
-local guiRoot = (gethui and gethui()) or game:GetService("CoreGui")
-pcall(function()
-    local old = guiRoot:FindFirstChild("HudGui")
-    if old then old:Destroy() end
+local conn = workspace.DescendantAdded:Connect(function(v)
+    task.defer(pcall, handle, v)
 end)
-local gui = Instance.new("ScreenGui")
-gui.Name = "HudGui"
-gui.ResetOnSpawn = false
-pcall(function() gui.Parent = guiRoot end)
-if not gui.Parent then gui.Parent = lp:WaitForChild("PlayerGui") end
+task.delay(LISTEN_SECONDS, function() conn:Disconnect() end)
 
-local function makeLabel(pos, color, text)
+-- ===== NHÃN FPS =====
+if SHOW_FPS then
+    local root = (gethui and gethui()) or game:GetService("CoreGui")
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "HudGui"
+    gui.ResetOnSpawn = false
+    pcall(function() gui.Parent = root end)
+    if not gui.Parent then gui.Parent = lp:WaitForChild("PlayerGui") end
     local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(0, 80, 0, 18)
-    l.Position = pos
+    l.Size = UDim2.new(0, 70, 0, 18)
+    l.Position = UDim2.new(0, 4, 0, 4)
     l.BackgroundColor3 = Color3.new(0, 0, 0)
     l.BackgroundTransparency = 0.4
-    l.TextColor3 = color
+    l.TextColor3 = Color3.new(0, 1, 0)
     l.TextSize = 12
-    l.Font = Enum.Font.GothamBold
-    l.Text = text
+    l.Text = "FPS: ..."
     l.Parent = gui
-    return l
-end
-
--- ===== HIỆN FPS =====
-if SHOW_FPS then
-    local fpsLabel = makeLabel(UDim2.new(0, 4, 0, 4), Color3.new(0, 1, 0), "FPS: ...")
-    local frames, t0 = 0, os.clock()
+    local f, t0 = 0, os.clock()
     RunService.Heartbeat:Connect(function()
-        frames += 1
-        local now = os.clock()
-        if now - t0 >= 1 then
-            fpsLabel.Text = "FPS: " .. frames
-            frames, t0 = 0, now
+        f += 1
+        if os.clock() - t0 >= 1 then
+            l.Text = "FPS: " .. f
+            f, t0 = 0, os.clock()
         end
     end)
 end
 
--- ===== NHÃN SỐ TẦNG =====
-if SHOW_FLOOR_HUD then
-    local label = makeLabel(UDim2.new(1, -90, 0, 4), Color3.new(1, 1, 1), "...")
-    local bound = {}
-    local function match(t)
-        return t.Text:match("^T[aầ]ng%s*%d+") or t.Text:match("^Floor%s*%d+")
-    end
-    local function bind(t)
-        if bound[t] or not t:IsA("TextLabel") or t:IsDescendantOf(gui) then return end
-        if not match(t) then return end
-        bound[t] = true
-        label.Text = t.Text
-        t:GetPropertyChangedSignal("Text"):Connect(function()
-            if match(t) then label.Text = t.Text end
-        end)
-    end
-    for _, d in ipairs(workspace:GetDescendants()) do pcall(bind, d) end
-    for _, d in ipairs(lp.PlayerGui:GetDescendants()) do pcall(bind, d) end
-    local c1 = workspace.DescendantAdded:Connect(function(d) task.defer(pcall, bind, d) end)
-    local c2 = lp.PlayerGui.DescendantAdded:Connect(function(d) task.defer(pcall, bind, d) end)
-    task.delay(60, function() c1:Disconnect() c2:Disconnect() end)
-end
-
-print("Đã bật | FPS cap " .. FPS_CAP .. " | 3D tắt: " .. tostring(DISABLE_3D))
+print("Treo bản nhẹ | cap " .. FPS_CAP .. " | 3D tắt: " .. tostring(DISABLE_3D))
